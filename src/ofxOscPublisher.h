@@ -350,6 +350,20 @@ namespace ofx {
             Base dummy[size];
         };
         
+        template <typename T, bool isCheckValue>
+        struct LambdaParameter : Parameter<T, isCheckValue> {
+            using Lambda = std::function<T()>;
+            
+            LambdaParameter(Lambda lambda)
+            : Parameter<T, isCheckValue>(dummy)
+            , lambda(lambda) {};
+            
+        protected:
+            virtual type_ref<T> get() { return dummy = lambda(); }
+            Lambda lambda;
+            remove_ref<T> dummy;
+        };
+        
         template <typename T, typename C, bool isCheckValue>
         struct GetterParameter : Parameter<T, isCheckValue> {
             using Getter = T (C::*)();
@@ -555,10 +569,22 @@ namespace ofx {
             }
             
             template <typename T>
-            Identifier publish(const std::string &address, T &value, bool whenValueIsChanged = true) {
+            auto publish(const std::string &address, T &value, bool whenValueIsChanged = true)
+            -> typename std::enable_if<!is_callable<T>::value, Identifier>::type {
                 ParameterRef p;
                 if(whenValueIsChanged) p = ParameterRef(new Parameter<T, true>(value));
                 else                   p = ParameterRef(new Parameter<T, false>(value));
+                return publish(address, p);
+            }
+            
+            template <typename T>
+            auto publish(const std::string &address, T &lambda, bool whenValueIsChanged = true)
+            -> typename std::enable_if<is_callable<T>::value, Identifier>::type {
+                using U = typename function_info<T>::result_type;
+                typename function_info<T>::function_type f = static_cast<typename function_info<T>::function_type>(lambda);
+                ParameterRef p;
+                if(whenValueIsChanged) p = ParameterRef(new LambdaParameter<U, true>(f));
+                else                   p = ParameterRef(new LambdaParameter<U, false>(f));
                 return publish(address, p);
             }
             
@@ -619,8 +645,19 @@ namespace ofx {
             }
             
             template <typename T>
-            Identifier publishIf(bool &condition, const std::string &address, T &value) {
+            auto publishIf(bool &condition, const std::string &address, T &value)
+            -> typename std::enable_if<!is_callable<T>::value, Identifier>::type {
                 ParameterRef p = ParameterRef(new Parameter<T, false>(value));
+                p->setCondition(std::shared_ptr<BasicCondition>(new ConditionRef(condition)));
+                return publish(address, p);
+            }
+
+            template <typename T>
+            auto publishIf(bool &condition, const std::string &address, T &lambda, bool whenValueIsChanged = true)
+            -> typename std::enable_if<is_callable<T>::value, Identifier>::type {
+                using U = typename function_info<T>::result_type;
+                typename function_info<T>::function_type f = static_cast<typename function_info<T>::function_type>(lambda);
+                ParameterRef p = ParameterRef(new LambdaParameter<U, false>(f));
                 p->setCondition(std::shared_ptr<BasicCondition>(new ConditionRef(condition)));
                 return publish(address, p);
             }
